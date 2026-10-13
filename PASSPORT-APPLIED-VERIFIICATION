@@ -1,0 +1,174 @@
+# ==============================================================================
+# SCRIPT 1: AUTOMATED PASSPORT KYC & CRYPTOGRAPHIC PIPELINE
+# Tech Stack: Python, NumPy, Pandas, Matplotlib, ICAO Doc 9303 Standard
+# ==============================================================================
+
+import math
+import secrets
+import string
+import random
+from datetime import datetime, timedelta
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# ------------------------------------------------------------------------------
+# 1. SPECIFICATION HELPERS: ICAO 9303 MRZ & ENTROPY
+# ------------------------------------------------------------------------------
+def calculate_icao_check_digit(data: str) -> str:
+    """Computes ICAO Doc 9303 check digit using weights [7, 3, 1]."""
+    weights = [7, 3, 1]
+    total = 0
+    for i, char in enumerate(data.upper()):
+        if '0' <= char <= '9':
+            val = int(char)
+        elif 'A' <= char <= 'Z':
+            val = ord(char) - 55
+        else:
+            val = 0
+        total += val * weights[i % 3]
+    return str(total % 10)
+
+def generate_icao_td3_mrz(surname: str, given_names: str, doc_number: str, 
+                          dob_yymmdd: str, sex: str, expiry_yymmdd: str, 
+                          country_code: str = "IND") -> tuple:
+    """Generates standardized 2-line x 44-character TD3 MRZ."""
+    # Line 1
+    clean_surname = "".join(c for c in surname.upper() if c.isalnum())
+    clean_given = "".join(c for c in given_names.upper() if c.isalnum())
+    name_field = f"{clean_surname}<<{clean_given}"[:39].ljust(39, '<')
+    line1 = f"P<{country_code[:3]}{name_field}".ljust(44, '<')
+
+    # Line 2
+    clean_doc = doc_number.upper()[:9].ljust(9, '<')
+    doc_chk = calculate_icao_check_digit(clean_doc)
+    dob_chk = calculate_icao_check_digit(dob_yymmdd)
+    exp_chk = calculate_icao_check_digit(expiry_yymmdd)
+    opt = "<" * 14
+    opt_chk = "<"
+    
+    composite_data = f"{clean_doc}{doc_chk}{dob_yymmdd}{dob_chk}{expiry_yymmdd}{exp_chk}{opt}{opt_chk}"
+    composite_chk = calculate_icao_check_digit(composite_data)
+
+    line2 = f"{clean_doc}{doc_chk}{country_code[:3]}{dob_yymmdd}{dob_chk}{sex}{expiry_yymmdd}{exp_chk}{opt}{opt_chk}{composite_chk}"
+    return line1, line2
+
+def compute_entropy(token: str, pool_size: int) -> float:
+    """Calculates search space entropy in bits: E = L * log2(|Pool|)."""
+    return len(token) * math.log2(pool_size) if pool_size > 1 else 0.0
+
+# ------------------------------------------------------------------------------
+# 2. SYNTHETIC APPLICANT GENERATOR (500 APPLICANTS)
+# ------------------------------------------------------------------------------
+np.random.seed(42)
+random.seed(42)
+
+first_names = ["Aarav", "Vivaan", "Aditya", "Vihaan", "Arjun", "Diya", "Ananya", "Isha", "Saanvi", "Pooja"]
+last_names = ["Sharma", "Verma", "Patel", "Reddy", "Mehta", "Nair", "Iyer", "Chopra", "Singh", "Gupta"]
+cities = ["Mumbai, Maharashtra", "Bengaluru, Karnataka", "New Delhi, Delhi", "Hyderabad, Telangana", "Chennai, Tamil Nadu"]
+banks = ["State Bank of India", "HDFC Bank", "ICICI Bank", "Punjab National Bank", "Axis Bank"]
+
+records = []
+
+for i in range(500):
+    surname = random.choice(last_names)
+    given_name = random.choice(first_names)
+    full_name = f"{given_name} {surname}"
+    sex = random.choice(["M", "F"])
+    
+    # Dates
+    age = random.randint(18, 65)
+    birth_date = datetime(2024, 1, 1) - timedelta(days=age * 365 + random.randint(0, 360))
+    dob_display = birth_date.strftime("%d-%m-%Y")
+    dob_yymmdd = birth_date.strftime("%y%m%d")
+    
+    expiry_date = datetime(2024, 1, 1) + timedelta(days=10 * 365)
+    exp_display = expiry_date.strftime("%d-%m-%Y")
+    exp_yymmdd = expiry_date.strftime("%y%m%d")
+
+    # Identification Documents
+    aadhaar_raw = "".join(str(random.randint(0, 9)) for _ in range(12))
+    aadhaar_masked = f"XXXX-XXXX-{aadhaar_raw[-4:]}"
+    
+    pan_letters = "".join(secrets.choice(string.ascii_uppercase) for _ in range(5))
+    pan_digits = "".join(secrets.choice(string.digits) for _ in range(4))
+    pan_last = secrets.choice(string.ascii_uppercase)
+    pan_number = f"{pan_letters}{pan_digits}{pan_last}"
+    
+    voter_id = f"{''.join(secrets.choice(string.ascii_uppercase) for _ in range(3))}{''.join(secrets.choice(string.digits) for _ in range(7))}"
+    
+    bank_name = random.choice(banks)
+    bank_acc = f"{random.randint(1000000000, 9999999999)}"
+    ifsc = f"{bank_name[:4].upper()}0{''.join(secrets.choice(string.digits) for _ in range(6))}"
+    
+    address = f"Flat {random.randint(101, 909)}, Sector {random.randint(1, 25)}, {random.choice(cities)}"
+
+    # Verification Simulation (Document Compliance Check)
+    pan_verified = random.random() > 0.05
+    voter_verified = random.random() > 0.08
+    bank_verified = random.random() > 0.04
+    aadhaar_verified = True
+    kyc_status = "Approved" if (pan_verified and voter_verified and bank_verified) else "Pending Document Review"
+
+    # Passport Document Number & Security Token
+    passport_num = f"{secrets.choice(string.ascii_uppercase)}{''.join(secrets.choice(string.digits) for _ in range(7))}"
+    
+    pool = string.ascii_letters + string.digits + "!@#$%^&*"
+    chip_token = "".join(secrets.choice(pool) for _ in range(16))
+    entropy_bits = compute_entropy(chip_token, len(pool))
+
+    line1, line2 = generate_icao_td3_mrz(surname, given_name, passport_num, dob_yymmdd, sex, exp_yymmdd, "IND")
+
+    records.append({
+        "applicant_id": f"APP-{1000 + i}",
+        "full_name": full_name,
+        "sex": sex,
+        "dob": dob_display,
+        "address": address,
+        "aadhaar": aadhaar_masked,
+        "pan": pan_number,
+        "voter_id": voter_id,
+        "bank_name": bank_name,
+        "bank_account": bank_acc,
+        "ifsc_code": ifsc,
+        "kyc_status": kyc_status,
+        "passport_number": passport_num,
+        "chip_token": chip_token,
+        "entropy_bits": round(entropy_bits, 2),
+        "mrz_line1": line1,
+        "mrz_line2": line2
+    })
+
+df = pd.DataFrame(records)
+
+# ------------------------------------------------------------------------------
+# 3. STATISTICAL SUMMARIES
+# ------------------------------------------------------------------------------
+print("DATASET PREVIEW (FIRST 3 APPLICANTS):")
+display(df[["applicant_id", "full_name", "aadhaar", "pan", "voter_id", "bank_name", "kyc_status", "passport_number"]].head(3))
+
+print("\nKYC APPROVAL COMPLIANCE SUMMARY:")
+approval_counts = df["kyc_status"].value_counts().reset_index()
+approval_counts.columns = ["Verification Status", "Applicant Count"]
+display(approval_counts)
+
+# ------------------------------------------------------------------------------
+# 4. DATA VISUALIZATION (MATPLOTLIB)
+# ------------------------------------------------------------------------------
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+# Plot 1: KYC Status Distribution
+status_data = df["kyc_status"].value_counts()
+axes[0].bar(status_data.index, status_data.values, color=["#10b981", "#f59e0b"], edgecolor="black")
+axes[0].set_title("KYC Verification Clearance Rate (N=500)", fontsize=12, fontweight="bold")
+axes[0].set_ylabel("Number of Applicants", fontsize=11)
+axes[0].set_xlabel("Document Compliance Status", fontsize=11)
+
+# Plot 2: Entropy Distribution of Biometric Chip Access Keys
+axes[1].hist(df["entropy_bits"], bins=20, color="#2563eb", edgecolor="black", alpha=0.8)
+axes[1].set_title("Cryptographic Key Entropy Distribution (Bits)", fontsize=12, fontweight="bold")
+axes[1].set_xlabel("Entropy (Bits)", fontsize=11)
+axes[1].set_ylabel("Frequency", fontsize=11)
+
+plt.tight_layout()
+plt.show()
